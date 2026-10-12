@@ -44,8 +44,8 @@ class GuiTests(unittest.TestCase):
         self.pump()
         self.assertEqual(self.port.levels, {1: 255, 2: 128})
         self.query()
-        self.assertEqual(left.level_text.get(), "Intensity: 100%")
-        self.assertEqual(right.level_text.get(), "Intensity: 50%")
+        self.assertEqual(left.level_text.get(), "100%")
+        self.assertEqual(right.level_text.get(), "50%")
 
     def test_all_off_cancels_queued_slider_commands(self):
         left, right = self.app.lights.values()
@@ -103,6 +103,8 @@ class GuiTests(unittest.TestCase):
             with self.subTest(title=window.title()):
                 self.assertGreaterEqual(window.winfo_height(), window.winfo_reqheight())
                 self.assertGreaterEqual(window.winfo_width(), window.winfo_reqwidth())
+                self.assertLessEqual(window.winfo_width(), 210)
+                self.assertLessEqual(window.winfo_height(), 350)
 
     def test_startup_shows_exactly_two_light_windows(self):
         self.pump()
@@ -139,6 +141,102 @@ class GuiTests(unittest.TestCase):
                 self.assertEqual(str(self.app.settings_window.transient()),
                                  str(self.app.lights[channel].window))
                 self.app.settings_window.destroy()
+
+    def test_first_slider_movement_sends_immediately(self):
+        left = self.app.lights[1]
+        left.level.set(65)
+        left.change("65")
+        # Assert before processing timers or releasing the mouse.
+        self.assertEqual(self.port.levels[1], 166)
+
+    def test_brightness_updates_during_continuous_drag(self):
+        left = self.app.lights[1]
+        sent = []
+        original_write = self.port.write
+        def record(packet):
+            if packet.startswith(b"L1:"):
+                sent.append(packet)
+            return original_write(packet)
+        self.port.write = record
+        left.start_drag()
+        for value in range(10, 100, 5):
+            left.level.set(value)
+            left.change(str(value))
+            self.pump(0.006)
+        self.assertTrue(left.dragging)
+        self.assertGreaterEqual(len(sent), 3)
+        self.assertGreater(self.port.levels[1], 150)
+        left.finish_drag()
+        self.assertEqual(self.port.levels[1], 242)
+        self.assertIsNone(left.pending)
+
+    def test_old_status_reply_does_not_pull_slider_back(self):
+        left = self.app.lights[1]
+        old_state = self.app.connection.states[1]
+        left.level.set(85)
+        left.change("85")
+        left.update(old_state)
+        self.assertEqual(left.level.get(), 85)
+        self.assertEqual(left.level_text.get(), "85%")
+
+    def test_dragged_value_survives_status_reply_between_updates(self):
+        left = self.app.lights[1]
+        left.start_drag()
+        left.level.set(70)
+        left.change("70")
+        self.query()
+        left.level.set(75)
+        left.update(self.app.connection.states[1])
+        self.assertEqual(left.level.get(), 75)
+        left.finish_drag()
+        self.assertEqual(self.port.levels[1], 191)
+
+    def test_local_switch_cancels_pending_drag_update(self):
+        left = self.app.lights[1]
+        left.start_drag()
+        left.level.set(10)
+        left.change("10")
+        left.level.set(100)
+        left.change("100")
+        self.assertIsNotNone(left.pending)
+        self.port.modes[1] = "LOCAL"
+        self.port.levels[1] = 50
+        self.app.connection.last_brightness_write = None
+        self.query()
+        self.pump(0.04)
+        self.assertIsNone(left.pending)
+        self.assertFalse(left.dragging)
+        self.assertEqual(left.mode.get(), "LOCAL")
+        self.assertEqual(self.port.levels[1], 50)
+
+    def test_repeated_identical_value_does_not_flood_serial(self):
+        left = self.app.lights[1]
+        sent = []
+        original_write = self.port.write
+        def record(packet):
+            if packet.startswith(b"L1:"):
+                sent.append(packet)
+            return original_write(packet)
+        self.port.write = record
+        for _ in range(10):
+            left.level.set(50)
+            left.change("50")
+            self.pump(0.006)
+        self.pump(0.04)
+        self.assertEqual(sent, [b"L1:128\n"])
+
+    def test_device_change_after_settling_resets_duplicate_filter(self):
+        left = self.app.lights[1]
+        left.level.set(50)
+        left.change("50")
+        self.port.levels[1] = 20
+        left.last_sent_at -= 2
+        self.app.connection.last_brightness_write = None
+        self.query()
+        self.assertEqual(left.last_sent_pwm, 20)
+        left.level.set(50)
+        left.change("50")
+        self.assertEqual(self.port.levels[1], 128)
 
 
 if __name__ == "__main__":

@@ -47,6 +47,8 @@ class MegaConnection:
     QUERY_INTERVAL = 0.5
     RESPONSE_TIMEOUT = 3.0
     HANDSHAKE_TIMEOUT = 5.0
+    QUERY_IDLE_TIME = 0.15
+    MAX_QUERY_INTERVAL = 1.0
 
     def __init__(self, on_status=None, on_state=None, on_log=None,
                  serial_factory=serial.Serial, clock=time.monotonic,
@@ -66,6 +68,8 @@ class MegaConnection:
         self.next_query = 0
         self.last_reply = None
         self.awaiting_query = False
+        self.last_brightness_write = None
+        self.last_query_time = None
 
     def connect(self, port_name):
         self.disconnect()
@@ -94,6 +98,8 @@ class MegaConnection:
         self.buffer.clear()
         self.last_reply = None
         self.awaiting_query = False
+        self.last_brightness_write = None
+        self.last_query_time = None
         self.on_state({})
         self.on_status(message)
 
@@ -149,16 +155,28 @@ class MegaConnection:
         if self.ready and now - self.last_reply >= self.RESPONSE_TIMEOUT:
             self.disconnect("Mega stopped responding. Reconnect to continue.")
             return
-        if now >= self.next_query and not self.awaiting_query:
+        # At 9600 baud the sketch's large JSON reply can occupy the board's
+        # serial buffer. Prefer a brief gap in slider traffic, but keep polling
+        # at least once per second to observe physical LOCAL/REMOTE switches.
+        brightness_active = (self.last_brightness_write is not None and
+                             now - self.last_brightness_write < self.QUERY_IDLE_TIME)
+        query_overdue = (self.last_query_time is None or
+                         now - self.last_query_time >= self.MAX_QUERY_INTERVAL)
+        if (now >= self.next_query and not self.awaiting_query and
+                (not brightness_active or query_overdue)):
             if self._write("Q\n"):
                 self.awaiting_query = True
+                self.last_query_time = now
                 self.next_query = now + self.QUERY_INTERVAL
 
     def set_brightness(self, channel, percent):
         state = self.states.get(channel)
         if not self.ready or state is None or state.mode != "REMOTE":
             return False
-        return self._write(f"L{channel}:{percent_to_pwm(percent)}\n")
+        if self._write(f"L{channel}:{percent_to_pwm(percent)}\n"):
+            self.last_brightness_write = self.clock()
+            return True
+        return False
 
     def all_off(self):
         """Return channels successfully sent zero; LOCAL channels remain local."""

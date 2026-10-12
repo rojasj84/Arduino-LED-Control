@@ -203,6 +203,25 @@ class ConnectionTests(unittest.TestCase):
             self.connection.poll()
         self.assertEqual(self.connection.buffer, bytearray())
 
+    def test_query_prefers_gap_in_brightness_updates(self):
+        self.ready()
+        self.clock.now = 2.5
+        self.connection.set_brightness(1, 60)
+        self.connection.poll()
+        self.assertEqual(self.port.commands, [b"Q\n", b"L1:153\n"])
+        self.clock.now = 2.66
+        self.connection.poll()
+        self.assertEqual(self.port.commands[-1], b"Q\n")
+
+    def test_continuous_drag_still_queries_modes(self):
+        self.ready()
+        for step in range(1, 11):
+            self.clock.now = 2 + step / 10
+            self.connection.set_brightness(1, step * 5)
+            self.connection.poll()
+        self.assertEqual(self.port.commands[-1], b"Q\n")
+        self.assertEqual(self.port.commands.count(b"Q\n"), 2)
+
 
 class ProtocolTests(unittest.TestCase):
     def test_percent_mapping(self):

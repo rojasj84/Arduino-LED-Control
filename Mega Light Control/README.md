@@ -14,7 +14,7 @@ programs and Mega sketch are left in place.
    `python -m pip install -r requirements.txt` (run from this folder).
 4. Double-click **Start Mega Light Control.bat**, or run
    `python mega_light_control.py` from this folder.
-5. Select the Mega in **Connection settings** if it isn't detected automatically.
+5. Select the Mega in **Settings > COM port settings** if it isn't detected automatically.
    Move each physical mode switch to **REMOTE** to enable its PC controls.
 
 Preview without connecting hardware: `python mega_light_control.py --demo`.
@@ -29,10 +29,11 @@ the two light windows.
 | Left Light | LED1 (`L1`) | D5 | A0 | D30 |
 | Right Light | LED2 (`L2`) | D7 | A1 | D31 |
 
-Only two light control windows appear at startup: **Left Light** in blue and
-**Right Light** in red. Each prominently shows its LED's **LOCAL** or **REMOTE**
-mode. Connection settings and the **Settings** / **View** menus are available
-from either light window; both use the same Mega connection.
+Only two compact light control windows appear at startup: **L-Light** in blue and
+**R-Light** in red, each with a percentage readout and vertical slider. The LED's
+**LOCAL** or **REMOTE** mode appears below the slider. **Settings**, **Lights**,
+and **View** menus are available in either window; both use the same connection.
+Detailed connection status appears in the Settings menu and connection dialog.
 
 Closing one light window hides it and leaves that light at its current level.
 Use the other window's **View** menu to reopen it. Closing the last light window
@@ -42,10 +43,18 @@ The serial monitor and connection dialog only appear when requested.
 - Each slider sends a 0–100% request as `L1:0`–`L1:255` or `L2:0`–`L2:255`,
   followed by a newline. The Mega applies its existing current cap; the app does
   not rescale the request again.
-- Each window has an Off button and **All lights off**, which sends zero to every channel
+- **Lights > Light off** turns off that window's channel. **Lights > All lights
+  off** sends zero to every channel
   currently reported as REMOTE. LOCAL channels remain controlled by their knobs;
   switch them to REMOTE or turn their knobs down to turn them off.
-- `Q` polls the Mega every half second. Windows display reported brightness and
+- Dragging sends its first changed brightness immediately and streams the latest
+  value at up to 40 updates per second, sending the final value on mouse release.
+  Identical PWM values are skipped; older status replies do not pull the thumb
+  backward while dragging. This works with the existing 9600-baud Mega sketch;
+  no firmware update is needed for the new interface or slider behavior.
+- `Q` normally polls the Mega every half second. During slider activity, it
+  prefers a 150 ms pause in brightness traffic, while still querying modes at
+  least once a second when the previous reply has arrived. Windows display brightness and
   LOCAL/REMOTE mode. Flipper mirror TTL signals aren't displayed in the light
   controls. Laser feedback isn't included in the sketch's JSON reply and isn't
   displayed in this app.
@@ -66,5 +75,7 @@ and wiring changes.
 
 Run `python -m unittest discover -s tests -v` from this folder. Tests use simulated
 serial I/O, including fragmented replies, independent channels, LOCAL mode,
-disconnects and timeouts. GUI smoke checks use the real Tk widgets with a
+disconnects, timeouts and query pacing during dragging. GUI checks exercise
+immediate and continuous drag updates, final release, stale status replies,
+compact layouts and separate window themes using the real Tk widgets with a
 simulated Mega. Physical hardware still needs a bench check.
